@@ -1,5 +1,10 @@
 #!/usr/bin/env groovy
-@Library ('jenkins-shared-library')
+library identifier: 'jenkins-shared-library@main', retriever: modernSCM(
+         [$class: 'GitSCMSource',
+         remote: 'https://github.com/zahranjamali/jenkins-shared-library.git',
+         credentialsId: 'zahranGithub'
+         ]
+)
 def gv
 
 pipeline {
