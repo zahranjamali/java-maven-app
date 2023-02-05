@@ -37,7 +37,7 @@ pipeline {
 		stage('build image'){
 			steps {
 				script{
-				def imageName = zahranjamali/my-repo:env.IMAGE_NAME
+				def imageName = "zahranjamali/my-repo:${IMAGE_NAME}"
 					buildImage(imageName)
 					dockerLogin()
 					dockerPush(imageName)
