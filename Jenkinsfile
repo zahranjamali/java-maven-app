@@ -1,16 +1,13 @@
 #!/usr/bin/env groovy
 
-  library identifier: 'jenkins-shared-library@main', retriever: modernSCM(
-	[$class: 'GitSCMSource',
-	remote: 'https://github.com/zahranjamali/jenkins-shared-library.git',
-	credentialsId: 'zahranGithub'
-	]
-)
-
 pipeline {
 	agent any
 	tools {
 		maven 'Maven'
+	}
+	environment {
+	       DOCKER_REPO_SERVER = 825117776865.dkr.ecr.ap-south-1.amazonaws.com
+	       DOCKER_REPO = "${DOCKER_REPO_SERVER}/java-maven-app"
 	}
 	stages {
 	    stage('increment version') {
@@ -30,17 +27,20 @@ pipeline {
 		stage('build app') {
 			steps {
 				script {
-					buildJar()
+					echo 'building the application'
+					sh 'mvn clean package'
 				}
 			}
 		}
 		stage('build image'){
 			steps {
 				script{
-				def imageName = "zahranjamali/my-repo:${IMAGE_NAME}"
-					buildImage(imageName)
-					dockerLogin()
-					dockerPush(imageName)
+				echo 'building the docker image'
+				withCredentials([usernamePassword(credentialsId: 'ecr-credentials', passwordVariable: 'PASS', usernameVariable: 'USER')]) {
+				    sh "docker build -t ${DOCKER_REPO}:${IMAGE_NAME} ."
+				    sh "echo $PASS | docker login -u $USER --password-stdin ${DOCKER_REPO_SERVER}"
+				    sh "docker push ${DOCKER_REPO}:${IMAGE_NAME}"
+				   }
 				}
 			}
 		}
