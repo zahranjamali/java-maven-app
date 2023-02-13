@@ -12,21 +12,10 @@ pipeline {
 	tools {
 		maven 'Maven'
 	}
-	stages {
-	    stage('increment version') {
-                steps {
-                    script {
-                        echo 'incrementing app version...'
-                        sh 'mvn build-helper:parse-version versions:set \
-                            -DnewVersion=\\\${parsedVersion.majorVersion}.\\\${parsedVersion.minorVersion}.\\\${parsedVersion.nextIncrementalVersion} \
-                            versions:commit'
-                        def matcher = readFile('pom.xml') =~ '<version>(.+)</version>'
-                        def version = matcher[0][1]
-                        env.IMAGE_NAME = "$version-$BUILD_NUMBER"
-                    }
-                }
-            }
-
+    environment {
+        IMAGE_NAME = 'zahranjamali/my-repo:java-maven-2.0'
+    }
+	stages {   
 		stage('build app') {
 			steps {
 				script {
@@ -37,42 +26,54 @@ pipeline {
 		stage('build image'){
 			steps {
 				script{
-				def imageName = "zahranjamali/my-repo:${IMAGE_NAME}"
-					buildImage(imageName)
+                    echo "building docker image"				
+					buildImage(env.IMAGE_NAME)
 					dockerLogin()
-					dockerPush(imageName)
+					dockerPush(env.IMAGE_NAME)
 				}
 			}
 		}
-		 stage("deploy") {
-                    environment {
+        stage('provision server'){
+            environment {
                         AWS_ACCESS_KEY_ID = credentials('jenkins-aws-access-key-id')
                         AWS_SECRET_ACCESS_KEY = credentials('jenkins-aws-secret-access-key-id')
-                        APP_NAME = 'java-maven-app'
-                    }
-                    steps {
-                        script {
-                            echo "deploying"
-                            sh 'envsubst < kubernetes/deployment.yaml | kubectl apply -f -'
-                            sh 'envsubst < kubernetes/service.yaml | kubectl apply -f -'
-                        }
+                        TF_VARS_env_prefix = 'test'
+            }
+            steps {
+                script {
+                    dir('terraform') {
+                        sh "terraform init"
+                        sh "terraform apply --auto-approve"
+                        EC2_PUBLIC_IP = sh(
+                            script: "terraform output ec2_public_ip"
+                            returnStdout: true
+                        ).trim()
                     }
                 }
-		stage('commit version update') {
-             steps {
-                 script {
-                    withCredentials([usernamePassword(credentialsId: 'zahranGithub', passwordVariable: 'PASS', usernameVariable: 'USER')]) {
-                    // git config here for the first time run
-                    sh 'git config --global user.email "jenkins@example.com"'
-                    sh 'git config --global user.name "jenkins"'
-
-                    sh "git remote set-url origin https://${USER}:${PASS}@github.com/zahranjamali/java-maven-app.git"
-                    sh 'git add .'
-                    sh 'git commit -m "ci: version bump"'
-                    sh 'git push origin HEAD:feature/jenkinsfile-sshagent'
-                    }
-                 }
-             }
+            }
         }
+		stage("deploy") {
+            environment {
+                DOCKER_CREDS = credentials('docker-hub-repo')
+            }           
+            steps {
+                script {
+                    echo "wainting to ec2 server to initialize"
+                    sleep(time: 90, unit: "SECONDS")
+
+                    echo "deploy docker image to ec2"
+                    echo "${EC2_PUBLIC_IP}"
+
+                    def shellCmd = "bash ./server-cmds.sh ${IMAGE_NAME} ${DOCKER_CREDS_USR} ${DOCKER_CREDS_PSW}"
+                    def ec2Instance = "ec2-user@${EC2_PUBLIC_IP}"
+
+                    sshagent(['server-ssh-key']) {
+                        sh "scp -o StrictHostKeyChecking=no server-cmds.sh ${ec2Instance}:/home/ec2-user"
+                        sh "scp -o StrictHostKeyChecking=no docker-compose-yaml ${ec2Instance}:/home/ec2-user"
+                        sh "ssh -o StrictHostKeyChecking=no ${ec2Instance} ${shellCmd}"
+                    }
+                }
+            }
+        }		
 	}
 }
